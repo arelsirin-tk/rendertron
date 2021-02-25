@@ -1,7 +1,6 @@
 import puppeteer, { ScreenshotOptions } from 'puppeteer';
 import url from 'url';
 import { dirname } from 'path';
-import koaLogger from 'koa-logger';
 
 import { Config } from './config';
 
@@ -155,11 +154,9 @@ export class Renderer {
       });
     } catch (e) {
       throw e;
-      // console.error(e);
     }
 
     if (!response) {
-      // console.error('response does not exist');
       // This should only occur when the page is about:blank. See
       // https://github.com/GoogleChrome/puppeteer/blob/v1.5.0/docs/api.md#pagegotourl-options.
       await page.close();
