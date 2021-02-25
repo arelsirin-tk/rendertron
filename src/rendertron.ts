@@ -32,6 +32,41 @@ export class Rendertron {
     this.renderer = new Renderer(browser, config);
   }
 
+  getNginxLogObject(args: any, message?: string) {
+    const method = args[1];
+    const url = args[2];
+    const status = args[3];
+    const time = args[4];
+    const length = args[5];
+
+    const requestUrl = url.replace('/render/', '');
+    const urlData = requestUrl.split('/').filter(Boolean);
+    const protocol = urlData[0].slice(0, -1);
+    const host = urlData[1].replace(/\?(.+)/, '');
+    const remoteAddress = `${protocol}://${host}`;
+    const query = urlData.slice(-1)[0].match(/\?/) ? urlData.slice(-1)[0].replace(/(.+)\?/, '') : '';
+    const path = requestUrl.replace(remoteAddress, '').replace(/\?(.+)/, '');
+    const date = new Date();
+
+    return {
+      '@timestamp': date.toISOString(),
+      'loggerGroup': 'rendertron',
+      'proto': protocol,
+      'message': message,
+      'req': {
+        'remote_address': remoteAddress,
+        'method': method,
+        'path': path,
+        'query': query,
+        'duration': time
+      },
+      'res': {
+        'status_code': status,
+        'bytes_sent': length,
+      }
+    };
+  }
+
   async initialize(config?: Config) {
     // Load config
     this.config = config || (await ConfigManager.getConfiguration());
@@ -41,7 +76,13 @@ export class Rendertron {
 
     await this.createRenderer(this.config);
 
-    this.app.use(koaLogger());
+    this.app.use(koaLogger({
+      transporter: (str, args) => {
+        if (Array.isArray(args) && args.length > 3) {
+          console.log(JSON.stringify(this.getNginxLogObject(args)));
+        }
+      }
+    }));
 
     this.app.use(koaCompress());
 
@@ -104,9 +145,7 @@ export class Rendertron {
       )
     );
 
-    return this.app.listen(+this.port, this.host, () => {
-      console.log(`Listening on port ${this.port}`);
-    });
+    return this.app.listen(+this.port, this.host, () => {});
   }
 
   /**
@@ -139,35 +178,39 @@ export class Rendertron {
   }
 
   async handleRenderRequest(ctx: Koa.Context, url: string) {
-    if (!this.renderer) {
-      throw new Error('No renderer initalized yet.');
+    try {
+      if (!this.renderer) {
+        throw new Error('No renderer initalized yet.');
+      }
+
+      if (this.restricted(url)) {
+        ctx.status = 403;
+        return;
+      }
+
+      const mobileVersion = 'mobile' in ctx.query ? true : false;
+
+      const serialized = await this.renderer.serialize(
+        url,
+        mobileVersion,
+        ctx.query.timezoneId
+      );
+
+      for (const key in this.config.headers) {
+        ctx.set(key, this.config.headers[key]);
+      }
+
+      // Mark the response as coming from Rendertron.
+      ctx.set('x-renderer', 'rendertron');
+      // Add custom headers to the response like 'Location'
+      serialized.customHeaders.forEach((value: string, key: string) =>
+        ctx.set(key, value)
+      );
+      ctx.status = serialized.status;
+      ctx.body = serialized.content;
+    } catch (error) {
+      // don't do anything (koa logger already logs error)
     }
-
-    if (this.restricted(url)) {
-      ctx.status = 403;
-      return;
-    }
-
-    const mobileVersion = 'mobile' in ctx.query ? true : false;
-
-    const serialized = await this.renderer.serialize(
-      url,
-      mobileVersion,
-      ctx.query.timezoneId
-    );
-
-    for (const key in this.config.headers) {
-      ctx.set(key, this.config.headers[key]);
-    }
-
-    // Mark the response as coming from Rendertron.
-    ctx.set('x-renderer', 'rendertron');
-    // Add custom headers to the response like 'Location'
-    serialized.customHeaders.forEach((value: string, key: string) =>
-      ctx.set(key, value)
-    );
-    ctx.status = serialized.status;
-    ctx.body = serialized.content;
   }
 
   async handleScreenshotRequest(ctx: Koa.Context, url: string) {

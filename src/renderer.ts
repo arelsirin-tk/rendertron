@@ -1,6 +1,7 @@
 import puppeteer, { ScreenshotOptions } from 'puppeteer';
 import url from 'url';
 import { dirname } from 'path';
+import koaLogger from 'koa-logger';
 
 import { Config } from './config';
 
@@ -153,11 +154,12 @@ export class Renderer {
         waitUntil: 'networkidle0',
       });
     } catch (e) {
-      console.error(e);
+      throw e;
+      // console.error(e);
     }
 
     if (!response) {
-      console.error('response does not exist');
+      // console.error('response does not exist');
       // This should only occur when the page is about:blank. See
       // https://github.com/GoogleChrome/puppeteer/blob/v1.5.0/docs/api.md#pagegotourl-options.
       await page.close();
@@ -285,41 +287,41 @@ export class Renderer {
         timeout: this.config.timeout,
         waitUntil: 'networkidle0',
       });
+
+      if (!response) {
+        await page.close();
+        if (this.config.closeBrowser) {
+          await this.browser.close();
+        }
+        throw new ScreenshotError('NoResponse');
+      }
+
+      // Disable access to compute metadata. See
+      // https://cloud.google.com/compute/docs/storing-retrieving-metadata.
+      if (response.headers()['metadata-flavor'] === 'Google') {
+        await page.close();
+        if (this.config.closeBrowser) {
+          await this.browser.close();
+        }
+        throw new ScreenshotError('Forbidden');
+      }
+
+      // Must be jpeg & binary format.
+      const screenshotOptions: ScreenshotOptions = {
+        type: options?.type || 'jpeg',
+        encoding: options?.encoding || 'binary',
+      };
+      // Screenshot returns a buffer based on specified encoding above.
+      // https://github.com/GoogleChrome/puppeteer/blob/v1.8.0/docs/api.md#pagescreenshotoptions
+      const buffer = (await page.screenshot(screenshotOptions)) as Buffer;
+      await page.close();
+      if (this.config.closeBrowser) {
+        await this.browser.close();
+      }
+      return buffer;
     } catch (e) {
-      console.error(e);
+      throw e;
     }
-
-    if (!response) {
-      await page.close();
-      if (this.config.closeBrowser) {
-        await this.browser.close();
-      }
-      throw new ScreenshotError('NoResponse');
-    }
-
-    // Disable access to compute metadata. See
-    // https://cloud.google.com/compute/docs/storing-retrieving-metadata.
-    if (response.headers()['metadata-flavor'] === 'Google') {
-      await page.close();
-      if (this.config.closeBrowser) {
-        await this.browser.close();
-      }
-      throw new ScreenshotError('Forbidden');
-    }
-
-    // Must be jpeg & binary format.
-    const screenshotOptions: ScreenshotOptions = {
-      type: options?.type || 'jpeg',
-      encoding: options?.encoding || 'binary',
-    };
-    // Screenshot returns a buffer based on specified encoding above.
-    // https://github.com/GoogleChrome/puppeteer/blob/v1.8.0/docs/api.md#pagescreenshotoptions
-    const buffer = (await page.screenshot(screenshotOptions)) as Buffer;
-    await page.close();
-    if (this.config.closeBrowser) {
-      await this.browser.close();
-    }
-    return buffer;
   }
 }
 
